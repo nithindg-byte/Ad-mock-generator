@@ -1,3 +1,7 @@
-streamlit
-Pillow
 pytz
+streamlit
+pillow
+numpy
+imageio[ffmpeg]
+imageio-ffmpeg
+playwright
