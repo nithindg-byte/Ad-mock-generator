@@ -1,6 +1,7 @@
 import io
 import math
 import os
+import subprocess
 import tempfile
 import zipfile
 from datetime import datetime
@@ -521,10 +522,17 @@ def ease_in_out_sine(x: float) -> float:
 def ease_out_cubic(x: float) -> float:
     return 1.0 - math.pow(1.0 - x, 3)
 
+def ensure_playwright_browsers():
+    """Ensures Playwright Chromium binaries are downloaded in server environments."""
+    try:
+        subprocess.run(["playwright", "install", "chromium"], check=True)
+    except Exception as e:
+        print(f"Playwright browser install warning: {e}")
+
 def render_html_animation_frames(
     html_content: str, duration_sec: float = 3.6, fps: int = 30, width: int = 540, height: int = 1200
 ) -> list[Image.Image]:
-    """Renders HTML animation using local browser via Playwright."""
+    """Renders HTML animation with automatic fallback to headless Chromium for Streamlit Cloud."""
     from playwright.sync_api import sync_playwright
 
     total_frames = int(duration_sec * fps)
@@ -537,15 +545,33 @@ def render_html_animation_frames(
     try:
         with sync_playwright() as p:
             browser = None
-            for browser_channel in ["chrome", "msedge"]:
+            launch_args = ["--no-sandbox", "--disable-setuid-sandbox", "--disable-dev-shm-usage"]
+
+            # 1. Primary: Default Playwright Chromium (Standard on Cloud and Linux containers)
+            try:
+                browser = p.chromium.launch(headless=True, args=launch_args)
+            except Exception:
+                # Install browser binary on the fly if missing on the instance
+                ensure_playwright_browsers()
                 try:
-                    browser = p.chromium.launch(headless=True, channel=browser_channel)
-                    break
+                    browser = p.chromium.launch(headless=True, args=launch_args)
                 except Exception:
-                    continue
+                    pass
+
+            # 2. Local Fallback: Installed Google Chrome or Microsoft Edge channels
+            if browser is None:
+                for channel in ["chrome", "msedge"]:
+                    try:
+                        browser = p.chromium.launch(headless=True, channel=channel)
+                        break
+                    except Exception:
+                        continue
 
             if browser is None:
-                raise RuntimeError("Could not find an installed Google Chrome or Microsoft Edge on this computer.")
+                raise RuntimeError(
+                    "Could not launch browser engine. Make sure packages.txt contains 'chromium' "
+                    "or run 'playwright install chromium'."
+                )
 
             page = browser.new_page(viewport={"width": width, "height": height})
             page.goto(f"file://{os.path.abspath(temp_html_path)}")
